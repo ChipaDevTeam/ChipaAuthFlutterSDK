@@ -1,11 +1,9 @@
-name: chipa_auth_sdk_example
-description: "Demonstrates how to use the chipa_auth_sdk plugin."
-# The following line prevents the package from being accidentally published to
-# pub.dev using `flutter pub publish`. This is preferred for private packages.
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+name: chipa_auth_flutter_example
+description: "Demonstrates how to use the chipa_auth_flutter SDK."
+publish_to: 'none'
 
 environment:
-  sdk: ^3.11.5
+  sdk: ">=3.0.0 <4.0.0"
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -17,12 +15,7 @@ dependencies:
   flutter:
     sdk: flutter
 
-  chipa_auth_sdk:
-    # When depending on this package from a real application you should use:
-    #   chipa_auth_sdk: ^x.y.z
-    # See https://dart.dev/tools/pub/dependencies#version-constraints
-    # The example app is bundled with the plugin so we use a path dependency on
-    # the parent directory to use the current plugin's version.
+  chipa_auth_flutter:
     path: ../
 
   # The following adds the Cupertino Icons font to your application.
