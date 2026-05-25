@@ -1,14 +1,11 @@
-// You have generated a new plugin project without specifying the `--platforms`
-// flag. A plugin project with no platform support was generated. To add a
-// platform, run `flutter create -t plugin --platforms <platforms> .` under the
-// same directory. You can also find a detailed instruction on how to add
-// platforms in the `pubspec.yaml` at
-// https://flutter.dev/to/pubspec-plugin-platforms.
+library chipa_auth_flutter;
 
-import 'chipa_auth_sdk_platform_interface.dart';
-
-class ChipaAuthSdk {
-  Future<String?> getPlatformVersion() {
-    return ChipaAuthSdkPlatform.instance.getPlatformVersion();
-  }
-}
+export 'src/models/chipa_user.dart';
+export 'src/models/license_info.dart';
+export 'src/models/chipa_auth_result.dart';
+export 'src/models/chipa_auth_error.dart';
+export 'src/models/license_validation.dart';
+export 'src/services/chipa_auth_service.dart' show ChipaAuth;
+export 'src/widgets/chipa_auth_widget.dart';
+export 'src/widgets/chipa_auth_button.dart';
+export 'src/widgets/chipa_auth_theme.dart';
