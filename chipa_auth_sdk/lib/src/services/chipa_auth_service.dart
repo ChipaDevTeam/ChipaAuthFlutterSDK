@@ -120,14 +120,44 @@ class ChipaAuth {
     final oauthUrl = initJson['url'] as String?;
     if (oauthUrl == null) throw const ChipaAuthError('No OAuth URL returned');
 
-    // 2. Open the system browser
+    // 2. Subscribe to the deep-link stream BEFORE opening the browser so
+    //    we can never miss the callback, regardless of how fast it arrives.
+    final callbackCompleter = Completer<Uri>();
+    final appLinks = AppLinks();
+    final sub = appLinks.uriLinkStream.listen((uri) {
+      // Accept any URI with our custom scheme — covers both
+      // chipaauth://callback?... and chipaauth:///callback?... variants.
+      if (uri.scheme == _callbackScheme && !callbackCompleter.isCompleted) {
+        callbackCompleter.complete(uri);
+      }
+    });
+
+    // 3. Open the system browser
     final uri = Uri.parse(oauthUrl);
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      throw ChipaAuthError('Could not open browser: $oauthUrl');
+    try {
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        throw ChipaAuthError('Could not open browser: $oauthUrl');
+      }
+    } catch (e) {
+      await sub.cancel();
+      rethrow;
     }
 
-    // 3. Wait for the deep-link callback  $_callbackScheme://callback?idToken=...
-    final deepLink = await _waitForCallback();
+    // 4. Wait for the deep-link callback with a cancellable 5-minute timeout
+    final timer = Timer(const Duration(minutes: 5), () {
+      if (!callbackCompleter.isCompleted) {
+        callbackCompleter.completeError(const ChipaAuthError(
+            'OAuth timed out — user did not complete sign-in'));
+      }
+    });
+
+    final Uri deepLink;
+    try {
+      deepLink = await callbackCompleter.future;
+    } finally {
+      timer.cancel();
+      await sub.cancel();
+    }
 
     final error = deepLink.queryParameters['error'];
     if (error != null) throw ChipaAuthError(error);
@@ -137,34 +167,8 @@ class ChipaAuth {
       throw const ChipaAuthError('No idToken in OAuth callback');
     }
 
-    // 4. Exchange idToken with the backend to get the full session + license
+    // 5. Exchange idToken with the backend to get the full session + license
     return signInWithIdToken(idToken);
-  }
-
-  /// Listens for the first incoming deep link matching
-  /// [_callbackScheme]://callback and returns it (or times out after 5 min).
-  Future<Uri> _waitForCallback() async {
-    final appLinks = AppLinks();
-    final completer = Completer<Uri>();
-
-    final sub = appLinks.uriLinkStream.listen((uri) {
-      if (uri.scheme == _callbackScheme && uri.host == 'callback') {
-        if (!completer.isCompleted) completer.complete(uri);
-      }
-    });
-
-    Future.delayed(const Duration(minutes: 5), () {
-      if (!completer.isCompleted) {
-        completer.completeError(const ChipaAuthError(
-            'OAuth timed out — user did not complete sign-in'));
-      }
-    });
-
-    try {
-      return await completer.future;
-    } finally {
-      await sub.cancel();
-    }
   }
 
   // ─── Register ─────────────────────────────────────────────────────────────
