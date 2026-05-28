@@ -1,8 +1,70 @@
+import 'dart:developer' as developer;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:chipa_auth_flutter/chipa_auth_sdk.dart';
+
+// ─── Logger ─────────────────────────────────────────────────────────────────
+
+class AppLogger extends ChangeNotifier {
+  static final AppLogger instance = AppLogger._();
+  AppLogger._();
+
+  final List<_LogEntry> _entries = [];
+  List<_LogEntry> get entries => List.unmodifiable(_entries);
+
+  void log(String message, {String level = 'INFO'}) {
+    _entries.add(_LogEntry(DateTime.now(), level, message));
+    if (_entries.length > 1000) _entries.removeAt(0);
+    notifyListeners();
+  }
+
+  void clear() {
+    _entries.clear();
+    notifyListeners();
+  }
+
+  String export() => _entries.map((e) => e.toString()).join('\n');
+}
+
+class _LogEntry {
+  final DateTime time;
+  final String level;
+  final String message;
+  _LogEntry(this.time, this.level, this.message);
+
+  @override
+  String toString() {
+    final h = time.hour.toString().padLeft(2, '0');
+    final m = time.minute.toString().padLeft(2, '0');
+    final s = time.second.toString().padLeft(2, '0');
+    final ms = time.millisecond.toString().padLeft(3, '0');
+    return '[$h:$m:$s.$ms] [$level] $message';
+  }
+}
+
+// ─── Entry point ─────────────────────────────────────────────────────────────
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Intercept all debugPrint calls (including SDK internals) into AppLogger
+  debugPrint = (String? message, {int? wrapWidth}) {
+    final msg = message ?? '';
+    AppLogger.instance.log(msg, level: 'DEBUG');
+    developer.log(msg, name: 'flutter');
+  };
+
+  // Capture Flutter framework errors
+  FlutterError.onError = (FlutterErrorDetails details) {
+    AppLogger.instance.log(
+      'FlutterError: ${details.exceptionAsString()}',
+      level: 'ERROR',
+    );
+    FlutterError.presentError(details);
+  };
+
+  AppLogger.instance.log('App started');
   runApp(const SetupApp());
 }
 
@@ -39,9 +101,14 @@ class _SetupPageState extends State<SetupPage> {
 
   void _proceed() {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    final url = _urlCtrl.text.trim();
+    final key = _keyCtrl.text.trim();
+    AppLogger.instance.log(
+      'SetupPage: init — url=$url  key=${key.length > 4 ? '${key.substring(0, 4)}…' : '***'}',
+    );
     ChipaAuth.init(
-      apiUrl: _urlCtrl.text.trim(),
-      apiKey: _keyCtrl.text.trim(),
+      apiUrl: url,
+      apiKey: key,
       callbackScheme: 'chipaauth',
     );
     Navigator.of(context).pushReplacement(
@@ -60,6 +127,11 @@ class _SetupPageState extends State<SetupPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF0F2FF),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        actions: [const _LogsAction()],
+      ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -147,6 +219,7 @@ class LoginPage extends StatelessWidget {
         title: const Text('ChipaAuth Test'),
         backgroundColor: Colors.transparent,
         elevation: 0,
+        actions: [const _LogsAction()],
       ),
       body: SafeArea(
         child: Center(
@@ -154,6 +227,9 @@ class LoginPage extends StatelessWidget {
             padding: const EdgeInsets.all(24),
             child: ChipaAuthWidget(
               onAuthSuccess: (ChipaAuthResult result) {
+                AppLogger.instance.log(
+                  'Auth success — uid:${result.user.uid}  email:${result.user.email ?? '-'}',
+                );
                 Navigator.of(context).pushReplacement(
                   MaterialPageRoute(
                     builder: (_) => HomePage(result: result),
@@ -161,6 +237,11 @@ class LoginPage extends StatelessWidget {
                 );
               },
               onAuthError: (ChipaAuthError error) {
+                AppLogger.instance.log(
+                  'Auth error — ${error.message}'
+                  '${error.statusCode != null ? ' (${error.statusCode})' : ''}',
+                  level: 'ERROR',
+                );
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text(error.message),
@@ -193,10 +274,12 @@ class HomePage extends StatelessWidget {
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
+          const _LogsAction(),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: 'Sign out',
             onPressed: () async {
+              AppLogger.instance.log('Signing out');
               await ChipaAuth.instance.signOut();
               if (context.mounted) {
                 Navigator.of(context).pushReplacement(
@@ -264,6 +347,134 @@ class HomePage extends StatelessWidget {
       ),
     );
   }
+}
+
+// ─── Logs page ──────────────────────────────────────────────────────────────
+
+class LogsPage extends StatefulWidget {
+  const LogsPage({super.key});
+
+  @override
+  State<LogsPage> createState() => _LogsPageState();
+}
+
+class _LogsPageState extends State<LogsPage> {
+  final _scrollCtrl = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    AppLogger.instance.addListener(_refresh);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+  }
+
+  @override
+  void dispose() {
+    AppLogger.instance.removeListener(_refresh);
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  void _refresh() {
+    if (!mounted) return;
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+  }
+
+  void _scrollToBottom() {
+    if (_scrollCtrl.hasClients) {
+      _scrollCtrl.animateTo(
+        _scrollCtrl.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOut,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = AppLogger.instance.entries;
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Logs (${entries.length})'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.copy_all_outlined),
+            tooltip: 'Copy all',
+            onPressed: entries.isEmpty
+                ? null
+                : () async {
+                    await Clipboard.setData(
+                        ClipboardData(text: AppLogger.instance.export()));
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Logs copied to clipboard'),
+                          duration: Duration(seconds: 2),
+                        ),
+                      );
+                    }
+                  },
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Clear logs',
+            onPressed: entries.isEmpty ? null : AppLogger.instance.clear,
+          ),
+        ],
+      ),
+      body: entries.isEmpty
+          ? const Center(
+              child: Text('No logs yet',
+                  style: TextStyle(color: Colors.grey)))
+          : ListView.builder(
+              controller: _scrollCtrl,
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 24),
+              itemCount: entries.length,
+              itemBuilder: (_, i) => _LogTile(entry: entries[i]),
+            ),
+    );
+  }
+}
+
+class _LogTile extends StatelessWidget {
+  final _LogEntry entry;
+  const _LogTile({super.key, required this.entry});
+
+  Color _levelColor() => switch (entry.level) {
+        'ERROR' => const Color(0xFFD32F2F),
+        'WARN'  => const Color(0xFFF57C00),
+        'DEBUG' => Colors.grey,
+        _       => const Color(0xFF1A237E),
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    return SelectableText(
+      entry.toString(),
+      style: TextStyle(
+        fontFamily: 'monospace',
+        fontSize: 11,
+        color: _levelColor(),
+        height: 1.5,
+      ),
+    );
+  }
+}
+
+// ─── Shared logs action button ────────────────────────────────────────────────
+
+class _LogsAction extends StatelessWidget {
+  const _LogsAction();
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+        icon: const Icon(Icons.terminal_outlined),
+        tooltip: 'Logs',
+        onPressed: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const LogsPage()),
+        ),
+      );
 }
 
 // ─── Helper widgets ───────────────────────────────────────────────────────────

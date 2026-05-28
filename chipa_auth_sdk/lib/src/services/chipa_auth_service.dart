@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:app_links/app_links.dart';
+import 'package:flutter/foundation.dart';
 
 import '../models/chipa_auth_error.dart';
 import '../models/chipa_auth_result.dart';
@@ -88,6 +89,7 @@ class ChipaAuth {
     required String email,
     required String password,
   }) async {
+    debugPrint('ChipaAuth: signIn → $email');
     final json = await _post(
         '/api/auth/login', jsonEncode({'email': email, 'password': password}));
     return _handleAuthResponse(json);
@@ -103,12 +105,16 @@ class ChipaAuth {
   /// The ChipaAuth backend handles the full OAuth exchange.
   /// Opens the system browser, waits for the deep-link callback,
   /// then completes the login with a single /api/auth/login call.
-  Future<ChipaAuthResult> signInWithGoogle() =>
-      _oauthSignIn('/api/auth/oauth/google/init');
+  Future<ChipaAuthResult> signInWithGoogle() {
+    debugPrint('ChipaAuth: starting Google OAuth');
+    return _oauthSignIn('/api/auth/oauth/google/init');
+  }
 
-  // ─── GitHub OAuth (hosted — no Firebase SDK needed) ───────────────────────
-  Future<ChipaAuthResult> signInWithGithub() =>
-      _oauthSignIn('/api/auth/oauth/github/init');
+  // ─── GitHub OAuth (hosted — no Firebase SDK needed) ─────────────────────
+  Future<ChipaAuthResult> signInWithGithub() {
+    debugPrint('ChipaAuth: starting GitHub OAuth');
+    return _oauthSignIn('/api/auth/oauth/github/init');
+  }
 
   Future<ChipaAuthResult> _oauthSignIn(String initEndpoint) async {
     // 1. Ask the backend for the OAuth consent-page URL
@@ -119,6 +125,7 @@ class ChipaAuth {
 
     final oauthUrl = initJson['url'] as String?;
     if (oauthUrl == null) throw const ChipaAuthError('No OAuth URL returned');
+    debugPrint('ChipaAuth: OAuth URL received — opening browser');
 
     // 2. Subscribe to the deep-link stream BEFORE opening the browser so
     //    we can never miss the callback, regardless of how fast it arrives.
@@ -138,6 +145,7 @@ class ChipaAuth {
       if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
         throw ChipaAuthError('Could not open browser: $oauthUrl');
       }
+      debugPrint('ChipaAuth: browser opened — waiting for deep-link callback');
     } catch (e) {
       await sub.cancel();
       rethrow;
@@ -158,6 +166,7 @@ class ChipaAuth {
       timer.cancel();
       await sub.cancel();
     }
+    debugPrint('ChipaAuth: deep-link received → ${deepLink.scheme}://${deepLink.host}');
 
     final error = deepLink.queryParameters['error'];
     if (error != null) throw ChipaAuthError(error);
@@ -273,6 +282,7 @@ class ChipaAuth {
         ? LicenseInfo.fromJson(json['license'] as Map<String, dynamic>)
         : null;
 
+    debugPrint('ChipaAuth: auth success — uid:${user.uid}  email:${user.email ?? '-'}');
     _currentUser = user;
     _currentToken = token;
     _currentLicense = license;
@@ -324,6 +334,7 @@ class ChipaAuth {
   Future<Map<String, dynamic>> _request(
       String method, String path, String? body,
       {int attempt = 0}) async {
+    debugPrint('ChipaAuth: → $method $path${attempt > 0 ? ' (retry $attempt)' : ''}');
     final uri = Uri.parse('$_apiUrl$path');
     try {
       final http.Response response;
@@ -333,6 +344,7 @@ class ChipaAuth {
         response = await http.post(uri, headers: _headers, body: body);
       }
 
+      debugPrint('ChipaAuth: ← ${response.statusCode} $path');
       final json = jsonDecode(response.body) as Map<String, dynamic>;
 
       if (response.statusCode >= 500 && attempt < _maxRetries) {
@@ -341,10 +353,9 @@ class ChipaAuth {
       }
 
       if (response.statusCode >= 400) {
-        throw ChipaAuthError(
-          json['message'] as String? ?? 'Request failed',
-          statusCode: response.statusCode,
-        );
+        final msg = json['message'] as String? ?? 'Request failed';
+        debugPrint('ChipaAuth: ✕ $method $path — $msg (${response.statusCode})');
+        throw ChipaAuthError(msg, statusCode: response.statusCode);
       }
 
       return json;
@@ -355,6 +366,7 @@ class ChipaAuth {
         await Future.delayed(Duration(seconds: 1 << attempt));
         return _request(method, path, body, attempt: attempt + 1);
       }
+      debugPrint('ChipaAuth: ✕ $method $path — network error: $e');
       throw ChipaAuthError('Network error', cause: e);
     }
   }
