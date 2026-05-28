@@ -514,7 +514,7 @@ class _InfoCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       SizedBox(
-                        width: 140,
+                        width: 140, 
                         child: Text(r.label,
                             style: const TextStyle(
                                 color: Colors.grey, fontSize: 12)),
