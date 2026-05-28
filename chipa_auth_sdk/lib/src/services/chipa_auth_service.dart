@@ -101,39 +101,34 @@ class ChipaAuth {
     return _handleAuthResponse(json);
   }
 
-  // ─── Google OAuth (hosted — no Firebase SDK needed) ───────────────────────
-  /// The ChipaAuth backend handles the full OAuth exchange.
-  /// Opens the system browser, waits for the deep-link callback,
-  /// then completes the login with a single /api/auth/login call.
+  // ─── Google OAuth (hosted web flow) ──────────────────────────────────────
+  /// Opens the ChipaAuth hosted auth page with a success_url deep-link.
+  /// The web page handles Firebase Google/GitHub OAuth and redirects back
+  /// to chipaauth://callback?token=<firebase_id_token>&email=...&uid=...
   Future<ChipaAuthResult> signInWithGoogle() {
     debugPrint('ChipaAuth: starting Google OAuth');
-    return _oauthSignIn('/api/auth/oauth/google/init');
+    return _oauthSignIn();
   }
 
-  // ─── GitHub OAuth (hosted — no Firebase SDK needed) ─────────────────────
+  // ─── GitHub OAuth (hosted web flow) ──────────────────────────────────────
   Future<ChipaAuthResult> signInWithGithub() {
     debugPrint('ChipaAuth: starting GitHub OAuth');
-    return _oauthSignIn('/api/auth/oauth/github/init');
+    return _oauthSignIn();
   }
 
-  Future<ChipaAuthResult> _oauthSignIn(String initEndpoint) async {
-    // 1. Ask the backend for the OAuth consent-page URL
-    final initJson = await _post(
-      initEndpoint,
-      jsonEncode({'callbackScheme': _callbackScheme}),
-    );
-
-    final oauthUrl = initJson['url'] as String?;
-    if (oauthUrl == null) throw const ChipaAuthError('No OAuth URL returned');
-    debugPrint('ChipaAuth: OAuth URL received — opening browser');
+  Future<ChipaAuthResult> _oauthSignIn() async {
+    // 1. Build the hosted auth page URL with our custom-scheme success_url.
+    //    The web page will redirect to:
+    //    chipaauth://callback?token=<firebase_id_token>&email=...&uid=...
+    final successUrl = Uri.encodeFull('$_callbackScheme://callback');
+    final oauthUrl = '$_apiUrl/auth?success_url=$successUrl';
+    debugPrint('ChipaAuth: opening hosted auth page');
 
     // 2. Subscribe to the deep-link stream BEFORE opening the browser so
     //    we can never miss the callback, regardless of how fast it arrives.
     final callbackCompleter = Completer<Uri>();
     final appLinks = AppLinks();
     final sub = appLinks.uriLinkStream.listen((uri) {
-      // Accept any URI with our custom scheme — covers both
-      // chipaauth://callback?... and chipaauth:///callback?... variants.
       if (uri.scheme == _callbackScheme && !callbackCompleter.isCompleted) {
         callbackCompleter.complete(uri);
       }
@@ -171,13 +166,14 @@ class ChipaAuth {
     final error = deepLink.queryParameters['error'];
     if (error != null) throw ChipaAuthError(error);
 
-    final idToken = deepLink.queryParameters['idToken'];
-    if (idToken == null || idToken.isEmpty) {
-      throw const ChipaAuthError('No idToken in OAuth callback');
+    // The hosted auth page passes `token` (Firebase ID token) in the redirect.
+    final token = deepLink.queryParameters['token'];
+    if (token == null || token.isEmpty) {
+      throw const ChipaAuthError('No token in OAuth callback');
     }
 
-    // 5. Exchange idToken with the backend to get the full session + license
-    return signInWithIdToken(idToken);
+    // 5. Exchange the Firebase ID token with the backend to get the full session + license
+    return signInWithIdToken(token);
   }
 
   // ─── Register ─────────────────────────────────────────────────────────────
